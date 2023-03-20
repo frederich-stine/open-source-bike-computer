@@ -1,9 +1,9 @@
-[submodule "libraries/Seeed_Arduino_LSM6DS3"]
-	path = libraries/Seeed_Arduino_LSM6DS3
-	url = git@github.com:Seeed-Studio/Seeed_Arduino_LSM6DS3.git
 [submodule "libraries/Seeed_Arduino_rpcUnified"]
 	path = libraries/Seeed_Arduino_rpcUnified
 	url = git@github.com:frederich-stine/Seeed_Arduino_rpcUnified.git
 [submodule "libraries/Seeed_Arduino_rpcBLE"]
 	path = libraries/Seeed_Arduino_rpcBLE
 	url = git@github.com:Seeed-Studio/Seeed_Arduino_rpcBLE.git
+[submodule "libraries/Seeed_Arduino_LSM6DS3"]
+	path = libraries/Seeed_Arduino_LSM6DS3
+	url = git@github.com:Seeed-Studio/Seeed_Arduino_LSM6DS3.git
