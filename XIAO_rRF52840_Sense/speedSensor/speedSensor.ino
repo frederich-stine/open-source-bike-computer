@@ -3,7 +3,7 @@
 
 #define MANUFACTURER_ID 0xFFFF
 #define BLE_MAJOR 0xDEAD
-#define BLE_MINOR 0x0000
+#define BLE_MINOR 0x0001
 
 LSM6DS3 IMU(I2C_MODE, 0x6A);
 
@@ -54,15 +54,13 @@ float get_avg_rpm() {
   float avgGx, avgGy, avgGz;
   for (int i=0; i<10; i++) {
     avgGx += gx[i];
-    avgGy += (gy[i]+.5);
+    avgGy += gy[i];
     avgGz += gz[i];
   }
 
   avgGx = abs(avgGx) / 10;
   avgGy = abs(avgGy) / 10;
   avgGz = abs(avgGz) / 10;
-
-  //Serial.printf("avgGx: %f: avgGy: %f: avgGz: %f\n", avgGx, avgGy, avgGz);
 
   if (avgGx >= avgGy && avgGx >= avgGz) {
     return avgGx;
