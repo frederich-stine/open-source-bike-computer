@@ -1,4 +1,5 @@
 #include "Free_Fonts.h"
+#include "datatypes.h"
 
 #include <rpcBLEDevice.h>
 #include <BLEScan.h>
@@ -33,17 +34,16 @@
 //**************************************************************************
 // global variables
 //**************************************************************************
-TaskHandle_t Handle_aTask;
-TaskHandle_t Handle_bTask;
+// FreeRTOS task handles
+TaskHandle_t Handle_displayTask;
+TaskHandle_t Handle_bleTask;
 TaskHandle_t Handle_sensorTask;
 TaskHandle_t Handle_buttonsTask;
 TaskHandle_t Handle_monitorTask;
 
-float rpm = 0;
-float speed = 0;
-
-bool rideStarted = 0;
-bool ridePaused = 0;
+// Global data structures
+displayData dispData;
+controlData contData;
 
 int scanTime = 1; //In seconds
 BLEScan* pBLEScan;
@@ -75,83 +75,104 @@ class MyAdvertisedDeviceCallbacks: public BLEAdvertisedDeviceCallbacks {
 
       if (major == BLE_MAJOR_RPM && minor == BLE_MINOR_RPM) {
         float* value = (float*) &manufacturerData[2];
-        rpm = *value;
-        Terminal.printf("Received RPM: %f\r\n", *value);
+        dispData.cadence = *value;
+        Terminal.printf("Received RPM: %f\r\n", dispData.cadence);
       }
       else if (major == BLE_MAJOR_SPEED && minor == BLE_MINOR_SPEED) {
         float* value = (float*) &manufacturerData[2];
         // Convert RPM to MPH
-        speed = ((*value*TIRE_CIRCUMFERENCE_CM)*.0022369);
-        Terminal.printf("Received Speed: %f\r\n", speed);
+        dispData.speed = ((*value*TIRE_CIRCUMFERENCE_CM)*.0003728);
+        Terminal.printf("Received Speed: %f\r\n", dispData.speed);
       }
     }
 };
 
-static void threadA(void* pvParameters) {
-
+static void threadDisplay(void* pvParameters) {
   TFT_eSPI tft = TFT_eSPI();
   tft.begin();
 
   tft.setRotation(3);
   tft.fillScreen(TFT_BLACK);
 
+  int xpos, ypos;
+  tft.setFreeFont(FM12);
+  tft.setTextDatum(TC_DATUM); // Centre text on x,y position
+
   // Update screen
   while (true) {
-    int xpos =  0;
+    if (contData.started == false) {
+      tft.fillScreen(TFT_BLACK);
+      xpos = tft.width() / 2;
+      ypos = (tft.height() / 2) - (tft.fontHeight(GFXFF) / 2);
+      tft.drawString("Computer Stopped", xpos, ypos, GFXFF);
 
-    tft.setTextColor(TFT_WHITE, TFT_BLACK);
-    tft.setTextDatum(TC_DATUM); // Centre text on x,y position
+      while (contData.started == false) {
+        delay(100);
+      }
+    }     
 
-    xpos = tft.width() / 2; // Half the screen width
-    int ypos = 5;
+    if (contData.started == true) {
+      tft.fillScreen(TFT_BLACK);
+      xpos = tft.width() / 2;
+      ypos = (tft.height() / 2) - (tft.fontHeight(GFXFF) / 2);
+      tft.drawString("Computer Started", xpos, ypos, GFXFF);
+      
+      delay(2000);
+      tft.fillScreen(TFT_BLACK);
 
-    char message[50];
+      while (contData.started == true) {
+        xpos = tft.width() / 2; // Half the screen width
+        ypos = 5;
 
-    tft.setTextPadding(tft.width());
-    tft.setFreeFont(FM12);
-    snprintf(message, 50, "Speed: %.2fMPH", speed);
-    tft.drawString(message, xpos, ypos, GFXFF);
-    ypos += tft.fontHeight(GFXFF);
+        char message[50];
 
-    snprintf(message, 50, "Distance: %.2fM", float(0));
-    tft.drawString(message, xpos, ypos, GFXFF);
-    ypos += tft.fontHeight(GFXFF);
+        tft.setTextPadding(tft.width());
+        tft.setFreeFont(FM12);
+        snprintf(message, 50, "Speed: %.2fMPH", dispData.speed);
+        tft.drawString(message, xpos, ypos, GFXFF);
+        ypos += tft.fontHeight(GFXFF);
 
-    snprintf(message, 50, "Cadence: %.2fRPM", rpm);
-    tft.drawString(message, xpos, ypos, GFXFF);
-    ypos += tft.fontHeight(GFXFF);
+        snprintf(message, 50, "Distance: %.2fM", float(0));
+        tft.drawString(message, xpos, ypos, GFXFF);
+        ypos += tft.fontHeight(GFXFF);
 
-    snprintf(message, 50, "Temperature: %.2fF", float(0));
-    tft.drawString(message, xpos, ypos, GFXFF);
-    ypos += tft.fontHeight(GFXFF);
+        snprintf(message, 50, "Cadence: %.2fRPM", dispData.cadence);
+        tft.drawString(message, xpos, ypos, GFXFF);
+        ypos += tft.fontHeight(GFXFF);
 
-    snprintf(message, 50, "Elevation: %.2fFt", float(0));
-    tft.drawString(message, xpos, ypos, GFXFF);    
-    ypos += tft.fontHeight(GFXFF);
+        snprintf(message, 50, "Temperature: %.2fF", float(0));
+        tft.drawString(message, xpos, ypos, GFXFF);
+        ypos += tft.fontHeight(GFXFF);
 
-    snprintf(message, 50, "AVG Speed: %.2fMPH", float(0));
-    tft.drawString(message, xpos, ypos, GFXFF);
-    ypos += tft.fontHeight(GFXFF);
+        snprintf(message, 50, "Elevation: %.2fFt", float(0));
+        tft.drawString(message, xpos, ypos, GFXFF);    
+        ypos += tft.fontHeight(GFXFF);
 
-    snprintf(message, 50, "AVG Cadence: %.2fRPM", float(0));
-    tft.drawString(message, xpos, ypos, GFXFF);
-    ypos += tft.fontHeight(GFXFF);
+        snprintf(message, 50, "AVG Speed: %.2fMPH", float(0));
+        tft.drawString(message, xpos, ypos, GFXFF);
+        ypos += tft.fontHeight(GFXFF);
 
-    snprintf(message, 50, "Elev Gain: %.2fRPM", float(0));
-    tft.drawString(message, xpos, ypos, GFXFF);
-    ypos += tft.fontHeight(GFXFF);
+        snprintf(message, 50, "AVG Cadence: %.2fRPM", float(0));
+        tft.drawString(message, xpos, ypos, GFXFF);
+        ypos += tft.fontHeight(GFXFF);
 
-    snprintf(message, 50, "Ride Time: %.2fH", 0);
-    tft.drawString(message, xpos, ypos, GFXFF);
-    ypos += tft.fontHeight(GFXFF);
+        snprintf(message, 50, "Elev Gain: %.2fRPM", float(0));
+        tft.drawString(message, xpos, ypos, GFXFF);
+        ypos += tft.fontHeight(GFXFF);
 
-    delay(1000);
-  }  
+        snprintf(message, 50, "Ride Time: %.2fH", float(0));
+        tft.drawString(message, xpos, ypos, GFXFF);
+        ypos += tft.fontHeight(GFXFF);
+
+        delay(1000);
+      }
+    }
+  }
 
   vTaskDelete(NULL);
 }
 
-static void threadB(void* pvParameters) {
+static void threadBLE(void* pvParameters) {
   Terminal.println("In thread A");
 
   BLEDevice::init("");
@@ -179,21 +200,24 @@ static void buttonThread(void* pvPatameters) {
   int bState[3];
   int bStatePrev[3];
 
-  for(;;) {
+  for (;;) {
     bState[0] = digitalRead(BUTTON_1);
     bState[1] = digitalRead(BUTTON_2);
     bState[2] = digitalRead(BUTTON_3);
 
     if (bState[0] == HIGH && bStatePrev[0] == LOW) {
-      rideStarted = 1;
+      Serial.println("Button 0 Pressed");
+      contData.started = true;
     }
     if (bState[1] == HIGH && bStatePrev[1] == LOW) {
-      if rideStarted {
-        ridePaused = !ridePaused;
+      Serial.println("Button 1 Pressed");
+      if (contData.started == true) {
+        contData.paused != contData.paused;
       }
     }
     if (bState[2] == HIGH && bStatePrev[2] == LOW) {
-      rideStarted = 0;
+      Serial.println("Button 2 Pressed");
+      contData.started = false;
     }
 
     bStatePrev[0] = bState[0];
@@ -224,12 +248,12 @@ void taskMonitor(void* pvParameters) {
         Terminal.println("******************************");
         Terminal.println("[Stacks Free Bytes Remaining] ");
 
-        measurement = uxTaskGetStackHighWaterMark(Handle_aTask);
-        Terminal.print("Thread A: ");
+        measurement = uxTaskGetStackHighWaterMark(Handle_displayTask);
+        Terminal.print("Thread Disp: ");
         Terminal.println(measurement);
 
-        measurement = uxTaskGetStackHighWaterMark(Handle_bTask);
-        Terminal.print("Thread B: ");
+        measurement = uxTaskGetStackHighWaterMark(Handle_bleTask);
+        Terminal.print("Thread BLE: ");
         Terminal.println(measurement);
 
         measurement = uxTaskGetStackHighWaterMark(Handle_monitorTask);
@@ -245,9 +269,6 @@ void taskMonitor(void* pvParameters) {
         delay(2000); // print every 2 seconds
     }
 
-    // delete ourselves.
-    // Have to caTerminal this or the system crashes when you reach the end bracket and then get scheduled.
-    Terminal.println("Task Monitor: Deleting");
     vTaskDelete(NULL);
 
 }
@@ -268,11 +289,16 @@ void setup() {
     //               Use the taskMonitor thread to help gauge how much more you need
     vSetErrorLed(ERROR_LED_PIN, ERROR_LED_LIGHTUP_STATE);
 
+    contData.paused = false;
+    contData.started = false;
+    dispData.speed = 0;
+    dispData.cadence = 0;
+
     // Create the threads that will be managed by the rtos
     // Sets the stack size and priority of each task
     // Also initializes a handler pointer to each task, which are important to communicate with and retrieve info from tasks
-    xTaskCreate(threadA, "LCD Task", 512, NULL, tskIDLE_PRIORITY + 3, &Handle_aTask);
-    xTaskCreate(threadB, "BLE Task", 512, NULL, tskIDLE_PRIORITY + 2, &Handle_bTask);
+    xTaskCreate(threadDisplay, "LCD Task", 1024, NULL, tskIDLE_PRIORITY + 3, &Handle_displayTask);
+    xTaskCreate(threadBLE, "BLE Task", 512, NULL, tskIDLE_PRIORITY + 2, &Handle_bleTask);
     xTaskCreate(buttonThread, "Buttons", 512, NULL, tskIDLE_PRIORITY + 3, &Handle_buttonsTask);
     //xTaskCreate(sensorThread, "Sensors", 4096, NULL, tskIDLE_PRIORITY + 2, &Handle_sensorTask);
 
