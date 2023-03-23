@@ -19,17 +19,16 @@
 #define TIRE_CIRCUMFERENCE_CM 222
 
 #define MANUFACTURER_ID 0xFFFF
-#define BLE_MAJOR_RPM 0xDEAD
-#define BLE_MINOR_RPM 0x0000
+#define BLE_MAJOR_RPM   0xDEAD
+#define BLE_MINOR_RPM   0x0000
 #define BLE_MAJOR_SPEED 0xDEAD
 #define BLE_MINOR_SPEED 0x0001
 
 #define ERROR_LED_PIN            LED_BUILTIN   //Led Pin: Typical Arduino Board
 #define ERROR_LED_LIGHTUP_STATE  LOW // the state that makes the led light up on your board, either low or high
 
-// Select the Serial port the project should use and communicate over
-// Sombe boards use SerialUSB, some use Serial
 #define Terminal          Serial
+
 
 //**************************************************************************
 // global variables
@@ -40,6 +39,10 @@ TaskHandle_t Handle_bleTask;
 TaskHandle_t Handle_sensorTask;
 TaskHandle_t Handle_buttonsTask;
 TaskHandle_t Handle_monitorTask;
+
+TimerHandle_t secondTimer;
+
+uint32_t secondsElapsed = 0;
 
 // Global data structures
 displayData dispData;
@@ -148,11 +151,11 @@ static void threadDisplay(void* pvParameters) {
         tft.drawString(message, xpos, ypos, GFXFF);    
         ypos += tft.fontHeight(GFXFF);
 
-        snprintf(message, 50, "AVG Speed: %.2fMPH", float(0));
+        snprintf(message, 50, "AVG Speed: %.2fMPH", dispData.avgSpeed);
         tft.drawString(message, xpos, ypos, GFXFF);
         ypos += tft.fontHeight(GFXFF);
 
-        snprintf(message, 50, "AVG Cadence: %.2fRPM", float(0));
+        snprintf(message, 50, "AVG Cadence: %.2fRPM", dispData.avgCadence);
         tft.drawString(message, xpos, ypos, GFXFF);
         ypos += tft.fontHeight(GFXFF);
 
@@ -160,7 +163,7 @@ static void threadDisplay(void* pvParameters) {
         tft.drawString(message, xpos, ypos, GFXFF);
         ypos += tft.fontHeight(GFXFF);
 
-        snprintf(message, 50, "Ride Time: %.2fH", float(0));
+        snprintf(message, 50, "Ride Time: %us", secondsElapsed);
         tft.drawString(message, xpos, ypos, GFXFF);
         ypos += tft.fontHeight(GFXFF);
 
@@ -206,17 +209,20 @@ static void buttonThread(void* pvPatameters) {
     bState[2] = digitalRead(BUTTON_3);
 
     if (bState[0] == HIGH && bStatePrev[0] == LOW) {
-      Serial.println("Button 0 Pressed");
       contData.started = true;
     }
     if (bState[1] == HIGH && bStatePrev[1] == LOW) {
       Serial.println("Button 1 Pressed");
       if (contData.started == true) {
-        contData.paused != contData.paused;
+        if (contData.paused == false) {
+          contData.paused = true;
+        }
+        else {
+          contData.paused = false;
+        }
       }
     }
     if (bState[2] == HIGH && bStatePrev[2] == LOW) {
-      Serial.println("Button 2 Pressed");
       contData.started = false;
     }
 
@@ -273,6 +279,24 @@ void taskMonitor(void* pvParameters) {
 
 }
 
+void secondTimerCallback ( TimerHandle_t xTimer ) {
+  if (contData.started == true) {
+    if (contData.paused == false) {
+      secondsElapsed += 1;
+
+      // Calculate average speed and cadence
+      float divRatio = ((float)secondsElapsed-1)/(float)secondsElapsed;
+      dispData.avgSpeed = (dispData.avgSpeed * divRatio) + \
+        dispData.speed / float(secondsElapsed);
+      dispData.avgCadence = (dispData.avgCadence * divRatio) + \
+        dispData.cadence / float(secondsElapsed);
+    }
+  }
+  else {
+    secondsElapsed = 0;
+  }
+}
+
 void setup() {
 
     Terminal.begin(115200);
@@ -294,6 +318,9 @@ void setup() {
     dispData.speed = 0;
     dispData.cadence = 0;
 
+    secondTimer = xTimerCreate("sTimer", 1000, pdTRUE, 0, secondTimerCallback);
+    xTimerStart(secondTimer, 1000);
+
     // Create the threads that will be managed by the rtos
     // Sets the stack size and priority of each task
     // Also initializes a handler pointer to each task, which are important to communicate with and retrieve info from tasks
@@ -311,6 +338,5 @@ void setup() {
 
 
 void loop() {
-
 }
 
