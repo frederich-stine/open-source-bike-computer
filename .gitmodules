@@ -7,3 +7,6 @@
 [submodule "libraries/Seeed_Arduino_rpcBLE"]
 	path = libraries/Seeed_Arduino_rpcBLE
 	url = git@github.com:Seeed-Studio/Seeed_Arduino_rpcBLE.git
+[submodule "libraries/Seeed_Arduino_AHT20"]
+	path = libraries/Seeed_Arduino_AHT20
+	url = git@github.com:Seeed-Studio/Seeed_Arduino_AHT20.git

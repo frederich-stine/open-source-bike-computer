@@ -20,7 +20,11 @@ typedef struct {
   bool paused;
 } controlData;
 
-
+typedef struct {
+  int hours;
+  int minutes;
+  int seconds;
+} timeData;
 
 
 

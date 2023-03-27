@@ -6,6 +6,7 @@
 #include <BLEAdvertisedDevice.h>
 #include <TFT_eSPI.h>
 #include <SPI.h>
+#include <AHT20.h>
 
 // Arduino.h header file included here redefines min and max functions and breaks gcc compilation
 // Make sure this include is the LAST include to stop previous libraries from failing to compile 
@@ -29,7 +30,6 @@
 
 #define Terminal          Serial
 
-
 //**************************************************************************
 // global variables
 //**************************************************************************
@@ -47,6 +47,7 @@ uint32_t secondsElapsed = 0;
 // Global data structures
 displayData dispData;
 controlData contData;
+timeData tData;
 
 int scanTime = 1; //In seconds
 BLEScan* pBLEScan;
@@ -143,7 +144,7 @@ static void threadDisplay(void* pvParameters) {
         tft.drawString(message, xpos, ypos, GFXFF);
         ypos += tft.fontHeight(GFXFF);
 
-        snprintf(message, 50, "Temperature: %.2fF", float(0));
+        snprintf(message, 50, "Temperature: %.2fF", dispData.temperature);
         tft.drawString(message, xpos, ypos, GFXFF);
         ypos += tft.fontHeight(GFXFF);
 
@@ -163,7 +164,7 @@ static void threadDisplay(void* pvParameters) {
         tft.drawString(message, xpos, ypos, GFXFF);
         ypos += tft.fontHeight(GFXFF);
 
-        snprintf(message, 50, "Ride Time: %us", secondsElapsed);
+        snprintf(message, 50, "Ride Time: %02d:%02d:%02d", tData.hours, tData.minutes, tData.seconds);
         tft.drawString(message, xpos, ypos, GFXFF);
         ypos += tft.fontHeight(GFXFF);
 
@@ -237,6 +238,19 @@ static void buttonThread(void* pvPatameters) {
 }
 
 static void sensorThread(void* pvPatameters) {
+  AHT20 AHT;
+
+  AHT.begin();
+
+  for (;;) {
+    float tempC;
+    AHT.getTemperature(&tempC);
+
+    dispData.temperature = (tempC * 1.8) + 32;
+
+    delay(1000);
+  }
+
 
   vTaskDelete(NULL);
 }
@@ -284,12 +298,18 @@ void secondTimerCallback ( TimerHandle_t xTimer ) {
     if (contData.paused == false) {
       secondsElapsed += 1;
 
+      tData.seconds = (int)secondsElapsed % 60;
+      tData.minutes = ((int)secondsElapsed / 60) % 60;
+      tData.hours = (int)secondsElapsed / 3600;
+
       // Calculate average speed and cadence
       float divRatio = ((float)secondsElapsed-1)/(float)secondsElapsed;
       dispData.avgSpeed = (dispData.avgSpeed * divRatio) + \
         dispData.speed / float(secondsElapsed);
       dispData.avgCadence = (dispData.avgCadence * divRatio) + \
         dispData.cadence / float(secondsElapsed);
+      
+      dispData.distance = dispData.distance + (dispData.speed / 3600.0);
     }
   }
   else {
@@ -325,9 +345,9 @@ void setup() {
     // Sets the stack size and priority of each task
     // Also initializes a handler pointer to each task, which are important to communicate with and retrieve info from tasks
     xTaskCreate(threadDisplay, "LCD Task", 1024, NULL, tskIDLE_PRIORITY + 3, &Handle_displayTask);
-    xTaskCreate(threadBLE, "BLE Task", 512, NULL, tskIDLE_PRIORITY + 2, &Handle_bleTask);
+    xTaskCreate(threadBLE, "BLE Task", 512, NULL, tskIDLE_PRIORITY + 3, &Handle_bleTask);
     xTaskCreate(buttonThread, "Buttons", 512, NULL, tskIDLE_PRIORITY + 3, &Handle_buttonsTask);
-    //xTaskCreate(sensorThread, "Sensors", 4096, NULL, tskIDLE_PRIORITY + 2, &Handle_sensorTask);
+    xTaskCreate(sensorThread, "Sensors", 512, NULL, tskIDLE_PRIORITY + 3, &Handle_sensorTask);
 
     xTaskCreate(taskMonitor, "Task Monitor", 256, NULL, tskIDLE_PRIORITY + 1, &Handle_monitorTask);
 
@@ -335,7 +355,6 @@ void setup() {
     vTaskStartScheduler();
 
 }
-
 
 void loop() {
 }
