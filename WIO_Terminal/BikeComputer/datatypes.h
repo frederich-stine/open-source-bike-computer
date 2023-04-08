@@ -24,9 +24,15 @@ typedef struct {
   int hours;
   int minutes;
   int seconds;
+  bool valid;
 } timeData;
 
-
+typedef struct {
+  float latitude;
+  float longitude;
+  float elevation;
+  bool valid;
+} gpsData;
 
 
 

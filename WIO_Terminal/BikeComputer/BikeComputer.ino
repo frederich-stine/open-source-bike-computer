@@ -7,10 +7,9 @@
 #include <TFT_eSPI.h>
 #include <SPI.h>
 #include <AHT20.h>
-
-// Arduino.h header file included here redefines min and max functions and breaks gcc compilation
-// Make sure this include is the LAST include to stop previous libraries from failing to compile 
-#include <Seeed_Arduino_FreeRTOS.h>
+//#include <SoftwareSerial.h>
+#include <TinyGPS++.h>
+#include <Seeed_Arduino_FS.h>
 
 //**************************************************************************
 // Type Defines and Constants
@@ -28,7 +27,14 @@
 #define ERROR_LED_PIN            LED_BUILTIN   //Led Pin: Typical Arduino Board
 #define ERROR_LED_LIGHTUP_STATE  LOW // the state that makes the led light up on your board, either low or high
 
-#define Terminal          Serial
+#define SD SD
+
+#ifdef _SAMD21_
+#define SDCARD_SS_PIN 1
+#define SDCARD_SPI SPI
+#endif 
+
+#define gpsSerial Serial1
 
 //**************************************************************************
 // global variables
@@ -36,33 +42,23 @@
 // FreeRTOS task handles
 TaskHandle_t Handle_displayTask;
 TaskHandle_t Handle_bleTask;
+TaskHandle_t Handle_gpsTask;
+TaskHandle_t Handle_gpsDispTask;
 TaskHandle_t Handle_sensorTask;
 TaskHandle_t Handle_buttonsTask;
-TaskHandle_t Handle_monitorTask;
+TaskHandle_t Handle_flashTask;
 
 TimerHandle_t secondTimer;
-
-uint32_t secondsElapsed = 0;
 
 // Global data structures
 displayData dispData;
 controlData contData;
 timeData tData;
+timeData gpsTime;
+gpsData gpsInfo;
+TinyGPSPlus gps;
 
-int scanTime = 1; //In seconds
 BLEScan* pBLEScan;
-
-//**************************************************************************
-// Can use these function for RTOS delays
-// Takes into account procesor speed
-//**************************************************************************
-void myDelayUs(int us) {
-    vTaskDelay(us / portTICK_PERIOD_US);
-}
-
-void myDelayMsUntil(TickType_t* previousWakeTime, int ms) {
-    vTaskDelayUntil(previousWakeTime, (ms * 1000) / portTICK_PERIOD_US);
-}
 
 class MyAdvertisedDeviceCallbacks: public BLEAdvertisedDeviceCallbacks {
     void onResult(BLEAdvertisedDevice advertisedDevice) {
@@ -80,13 +76,13 @@ class MyAdvertisedDeviceCallbacks: public BLEAdvertisedDeviceCallbacks {
       if (major == BLE_MAJOR_RPM && minor == BLE_MINOR_RPM) {
         float* value = (float*) &manufacturerData[2];
         dispData.cadence = *value;
-        Terminal.printf("Received RPM: %f\r\n", dispData.cadence);
+        Serial.printf("Received RPM: %f\r\n", dispData.cadence);
       }
       else if (major == BLE_MAJOR_SPEED && minor == BLE_MINOR_SPEED) {
         float* value = (float*) &manufacturerData[2];
         // Convert RPM to MPH
         dispData.speed = ((*value*TIRE_CIRCUMFERENCE_CM)*.0003728);
-        Terminal.printf("Received Speed: %f\r\n", dispData.speed);
+        Serial.printf("Received Speed: %f\r\n", dispData.speed);
       }
     }
 };
@@ -136,7 +132,7 @@ static void threadDisplay(void* pvParameters) {
         tft.drawString(message, xpos, ypos, GFXFF);
         ypos += tft.fontHeight(GFXFF);
 
-        snprintf(message, 50, "Distance: %.2fM", float(0));
+        snprintf(message, 50, "Distance: %.2fM", dispData.distance);
         tft.drawString(message, xpos, ypos, GFXFF);
         ypos += tft.fontHeight(GFXFF);
 
@@ -177,8 +173,6 @@ static void threadDisplay(void* pvParameters) {
 }
 
 static void threadBLE(void* pvParameters) {
-  Terminal.println("In thread A");
-
   BLEDevice::init("");
   pBLEScan = BLEDevice::getScan(); //create new scan
   pBLEScan->setAdvertisedDeviceCallbacks(new MyAdvertisedDeviceCallbacks());
@@ -188,14 +182,15 @@ static void threadBLE(void* pvParameters) {
 
   while (true) {
     //BLEScanResults foundDevices = pBLEScan->start(scanTime, false);
-    pBLEScan->start(scanTime, false);
-    Terminal.printf("Done scanning\n");
+    //Serial.printf("Before start\n");
+    pBLEScan->start(1, false);
+    //Serial.printf("Done scanning\n");
   }
 
   vTaskDelete(NULL);
 }
 
-static void buttonThread(void* pvPatameters) {
+static void buttonThread(void* pvParameters) {
 
   pinMode(BUTTON_1, INPUT);
   pinMode(BUTTON_2, INPUT);
@@ -203,6 +198,10 @@ static void buttonThread(void* pvPatameters) {
 
   int bState[3];
   int bStatePrev[3];
+
+  //SoftwareSerial gpsSerial(D0,D1);
+
+  gpsSerial.begin(9600);
 
   for (;;) {
     bState[0] = digitalRead(BUTTON_1);
@@ -227,6 +226,10 @@ static void buttonThread(void* pvPatameters) {
       contData.started = false;
     }
 
+    while (gpsSerial.available()) {
+      gps.encode(gpsSerial.read());
+    }
+
     bStatePrev[0] = bState[0];
     bStatePrev[1] = bState[1];
     bStatePrev[2] = bState[2];
@@ -237,7 +240,7 @@ static void buttonThread(void* pvPatameters) {
   vTaskDelete(NULL);
 }
 
-static void sensorThread(void* pvPatameters) {
+static void sensorThread(void* pvParameters) {
   AHT20 AHT;
 
   AHT.begin();
@@ -255,105 +258,131 @@ static void sensorThread(void* pvPatameters) {
   vTaskDelete(NULL);
 }
 
-void taskMonitor(void* pvParameters) {
-    int x;
-    int measurement;
-
-    Terminal.println("Task Monitor: Started");
-
-    // run this task afew times before exiting forever
-    for (;;) {
-
-        Terminal.println("");
-        Terminal.println("******************************");
-        Terminal.println("[Stacks Free Bytes Remaining] ");
-
-        measurement = uxTaskGetStackHighWaterMark(Handle_displayTask);
-        Terminal.print("Thread Disp: ");
-        Terminal.println(measurement);
-
-        measurement = uxTaskGetStackHighWaterMark(Handle_bleTask);
-        Terminal.print("Thread BLE: ");
-        Terminal.println(measurement);
-
-        measurement = uxTaskGetStackHighWaterMark(Handle_monitorTask);
-        Terminal.print("Monitor Stack: ");
-        Terminal.println(measurement);
-
-        measurement = xPortGetFreeHeapSize();
-        Terminal.print("Heap remaining: ");
-        Terminal.println(measurement);
-
-        Terminal.println("******************************");
-
-        delay(2000); // print every 2 seconds
+File rideFile;
+static void flashThread(void* pvParameters) {
+    pinMode(5, OUTPUT);
+    digitalWrite(5, HIGH);
+    while (!SD.begin(SDCARD_SS_PIN,SDCARD_SPI,4000000UL)) {
+        Serial.println("Card Mount Failed");
+        vTaskDelete(NULL);
     }
 
-    vTaskDelete(NULL);
+    Serial.println("initialization done.");
 
+    char text[200];
+    // Generate a filename for the ride
+
+    bool firstStart = true;
+    while (true) {
+      if (contData.started == true) {
+        if (firstStart == true) {
+          int i=0;
+          while (true) {
+            snprintf(text, 200, "ride_%d.txt", i);
+            if(!SD.exists(text)) {
+              Serial.printf("Filename: %s\n", text);
+              rideFile = SD.open(text, "w");
+              firstStart = false;
+              break;
+            }
+            i++;
+          }
+        }
+        else {
+          if (contData.paused == true) {
+            continue;
+          }
+          snprintf(text, 200, "D,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,\n", 
+            dispData.rideTime, dispData.speed,
+            dispData.cadence, dispData.avgSpeed,
+            dispData.avgCadence, dispData.temperature,
+            dispData.elevation, dispData.elevationGain,
+            dispData.rideTime, dispData.distance);
+          Serial.print(text);
+          rideFile.write(text);
+          snprintf(text, 200, "GPS,%.8f,%.8f,%.8f\n",
+            gpsInfo.latitude, gpsInfo.longitude, gpsInfo.elevation);
+          Serial.print(text);
+          rideFile.write(text);
+          snprintf(text, 200, "GPST,%d,%d,%d\n", 
+            gpsTime.hours, gpsTime.minutes, gpsTime.seconds);
+          Serial.print(text);
+          rideFile.write(text);
+        }
+      }
+      else {
+        if (rideFile != NULL) {
+          rideFile.close();
+          firstStart = true;
+        }
+      }
+      delay(1000);
+    }
+
+  vTaskDelete(NULL);
 }
 
 void secondTimerCallback ( TimerHandle_t xTimer ) {
   if (contData.started == true) {
     if (contData.paused == false) {
-      secondsElapsed += 1;
+      dispData.rideTime += 1;
 
-      tData.seconds = (int)secondsElapsed % 60;
-      tData.minutes = ((int)secondsElapsed / 60) % 60;
-      tData.hours = (int)secondsElapsed / 3600;
+      tData.seconds = (int)dispData.rideTime % 60;
+      tData.minutes = ((int)dispData.rideTime / 60) % 60;
+      tData.hours = (int)dispData.rideTime / 3600;
 
       // Calculate average speed and cadence
-      float divRatio = ((float)secondsElapsed-1)/(float)secondsElapsed;
+      float divRatio = ((float)dispData.rideTime-1)/(float)dispData.rideTime;
       dispData.avgSpeed = (dispData.avgSpeed * divRatio) + \
-        dispData.speed / float(secondsElapsed);
+        dispData.speed / float(dispData.rideTime);
       dispData.avgCadence = (dispData.avgCadence * divRatio) + \
-        dispData.cadence / float(secondsElapsed);
+        dispData.cadence / float(dispData.rideTime);
       
       dispData.distance = dispData.distance + (dispData.speed / 3600.0);
     }
   }
   else {
-    secondsElapsed = 0;
+    dispData.rideTime = 0;
+  }
+
+  if (gps.location.isValid()) {
+    gpsInfo.latitude = (float)gps.location.lat();
+    gpsInfo.longitude = (float)gps.location.lng();
+  }
+  if (gps.altitude.isValid()) {
+    gpsInfo.elevation = (float)gps.altitude.feet();
+  }
+  if (gps.time.isValid()) {
+    gpsTime.hours = (int)gps.time.hour();
+    gpsTime.minutes = (int)gps.time.minute();
+    gpsTime.seconds = (int)gps.time.second();
   }
 }
 
 void setup() {
+    Serial.begin(115200);
 
-    Terminal.begin(115200);
+    // Prevent USB driver crash
+    vNopDelayMS(1000);
 
-    vNopDelayMS(1000); // prevents usb driver crash on startup, do not omit this
-
-    // Set the led the rtos will blink when we have a fatal rtos error
-    // RTOS also Needs to know if high/low is the state that turns on the led.
-    // Error Blink Codes:
-    //    3 blinks - Fatal Rtos Error, something bad happened. Think really hard about what you just changed.
-    //    2 blinks - Malloc Failed, Happens when you couldn't create a rtos object.
-    //               Probably ran out of heap.
-    //    1 blink  - Stack overflow, Task needs more bytes defined for its stack!
-    //               Use the taskMonitor thread to help gauge how much more you need
     vSetErrorLed(ERROR_LED_PIN, ERROR_LED_LIGHTUP_STATE);
 
     contData.paused = false;
     contData.started = false;
     dispData.speed = 0;
     dispData.cadence = 0;
+    dispData.rideTime = 0;
 
     secondTimer = xTimerCreate("sTimer", 1000, pdTRUE, 0, secondTimerCallback);
     xTimerStart(secondTimer, 1000);
 
-    // Create the threads that will be managed by the rtos
-    // Sets the stack size and priority of each task
-    // Also initializes a handler pointer to each task, which are important to communicate with and retrieve info from tasks
-    xTaskCreate(threadDisplay, "LCD Task", 1024, NULL, tskIDLE_PRIORITY + 3, &Handle_displayTask);
-    xTaskCreate(threadBLE, "BLE Task", 512, NULL, tskIDLE_PRIORITY + 3, &Handle_bleTask);
+    xTaskCreate(threadDisplay, "LCD", 1024, NULL, tskIDLE_PRIORITY + 3, &Handle_displayTask);
+    xTaskCreate(threadBLE, "BLE", 512, NULL, tskIDLE_PRIORITY + 6, &Handle_bleTask);
     xTaskCreate(buttonThread, "Buttons", 512, NULL, tskIDLE_PRIORITY + 3, &Handle_buttonsTask);
     xTaskCreate(sensorThread, "Sensors", 512, NULL, tskIDLE_PRIORITY + 3, &Handle_sensorTask);
+    xTaskCreate(flashThread, "Flash", 4096, NULL, tskIDLE_PRIORITY + 3, &Handle_flashTask);
 
-    xTaskCreate(taskMonitor, "Task Monitor", 256, NULL, tskIDLE_PRIORITY + 1, &Handle_monitorTask);
-
-    // Start the RTOS, this function will never return and will schedule the tasks.
     vTaskStartScheduler();
-
 }
 
 void loop() {
