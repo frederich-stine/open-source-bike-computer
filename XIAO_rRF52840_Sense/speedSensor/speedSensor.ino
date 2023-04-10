@@ -14,7 +14,6 @@ BLEBeacon beacon(beaconUuid, BLE_MAJOR, BLE_MINOR, -54);
 
 void setup() {
   Serial.begin(115200);
-  while (!Serial);
 
   if (IMU.begin() != 0) {
     Serial.println("IMU Error");
