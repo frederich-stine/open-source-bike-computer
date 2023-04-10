@@ -10,3 +10,9 @@
 [submodule "libraries/Seeed_Arduino_AHT20"]
 	path = libraries/Seeed_Arduino_AHT20
 	url = git@github.com:Seeed-Studio/Seeed_Arduino_AHT20.git
+[submodule "libraries/Seeed_Arduino_FS"]
+	path = libraries/Seeed_Arduino_FS
+	url = git@github.com:Seeed-Studio/Seeed_Arduino_FS.git
+[submodule "libraries/Seeed_Arduino_Sketchbook"]
+	path = libraries/Seeed_Arduino_Sketchbook
+	url = git@github.com:Seeed-Studio/Seeed_Arduino_Sketchbook.git
