@@ -1,31 +1,18 @@
 #include "Free_Fonts.h"
 #include "datatypes.h"
 
-#include <rpcBLEDevice.h>
-#include <BLEScan.h>
-#include <BLEAdvertisedDevice.h>
 #include <TFT_eSPI.h>
 #include <SPI.h>
 #include <AHT20.h>
-//#include <SoftwareSerial.h>
 #include <TinyGPS++.h>
 #include <Seeed_Arduino_FS.h>
+#include <Seeed_Arduino_FreeRTOS.h>
 
 //**************************************************************************
 // Type Defines and Constants
 //**************************************************************************
-
-// Reference: https://www.cateye.com/data/resources/Tire_size_chart_ENG_151106.pdf
-#define TIRE_CIRCUMFERENCE_CM 222
-
-#define MANUFACTURER_ID 0xFFFF
-#define BLE_MAJOR_RPM   0xDEAD
-#define BLE_MINOR_RPM   0x0000
-#define BLE_MAJOR_SPEED 0xDEAD
-#define BLE_MINOR_SPEED 0x0001
-
-#define ERROR_LED_PIN            LED_BUILTIN   //Led Pin: Typical Arduino Board
-#define ERROR_LED_LIGHTUP_STATE  LOW // the state that makes the led light up on your board, either low or high
+#define ERROR_LED_PIN            LED_BUILTIN
+#define ERROR_LED_LIGHTUP_STATE  LOW
 
 #define SD SD
 
@@ -36,16 +23,10 @@
 
 #define gpsSerial Serial1
 
-//**************************************************************************
-// global variables
-//**************************************************************************
 // FreeRTOS task handles
 TaskHandle_t Handle_displayTask;
-TaskHandle_t Handle_bleTask;
-TaskHandle_t Handle_gpsTask;
-TaskHandle_t Handle_gpsDispTask;
 TaskHandle_t Handle_sensorTask;
-TaskHandle_t Handle_buttonsTask;
+TaskHandle_t Handle_pollTask;
 TaskHandle_t Handle_flashTask;
 
 TimerHandle_t secondTimer;
@@ -57,35 +38,6 @@ timeData tData;
 timeData gpsTime;
 gpsData gpsInfo;
 TinyGPSPlus gps;
-
-BLEScan* pBLEScan;
-
-class MyAdvertisedDeviceCallbacks: public BLEAdvertisedDeviceCallbacks {
-    void onResult(BLEAdvertisedDevice advertisedDevice) {
-      if (!advertisedDevice.haveManufacturerData()) {
-        return;
-      }
-      if (advertisedDevice.getManufacturerDataLength() != 23) {
-        return;
-      }
-      uint8_t* manufacturerData = advertisedDevice.getManufacturerData();
-
-      uint16_t major = (manufacturerData[18] << 8) | (manufacturerData[19]);
-      uint16_t minor = (manufacturerData[20] << 8) | (manufacturerData[21]);
-
-      if (major == BLE_MAJOR_RPM && minor == BLE_MINOR_RPM) {
-        float* value = (float*) &manufacturerData[2];
-        dispData.cadence = *value;
-        Serial.printf("Received RPM: %f\r\n", dispData.cadence);
-      }
-      else if (major == BLE_MAJOR_SPEED && minor == BLE_MINOR_SPEED) {
-        float* value = (float*) &manufacturerData[2];
-        // Convert RPM to MPH
-        dispData.speed = ((*value*TIRE_CIRCUMFERENCE_CM)*.0003728);
-        Serial.printf("Received Speed: %f\r\n", dispData.speed);
-      }
-    }
-};
 
 static void threadDisplay(void* pvParameters) {
   TFT_eSPI tft = TFT_eSPI();
@@ -144,7 +96,7 @@ static void threadDisplay(void* pvParameters) {
         tft.drawString(message, xpos, ypos, GFXFF);
         ypos += tft.fontHeight(GFXFF);
 
-        snprintf(message, 50, "Elevation: %.2fFt", float(0));
+        snprintf(message, 50, "Elevation: %.2fFt", dispData.elevation);
         tft.drawString(message, xpos, ypos, GFXFF);    
         ypos += tft.fontHeight(GFXFF);
 
@@ -156,7 +108,7 @@ static void threadDisplay(void* pvParameters) {
         tft.drawString(message, xpos, ypos, GFXFF);
         ypos += tft.fontHeight(GFXFF);
 
-        snprintf(message, 50, "Elev Gain: %.2fRPM", float(0));
+        snprintf(message, 50, "Elev Gain: %.2fFt", dispData.elevationGain);
         tft.drawString(message, xpos, ypos, GFXFF);
         ypos += tft.fontHeight(GFXFF);
 
@@ -172,25 +124,7 @@ static void threadDisplay(void* pvParameters) {
   vTaskDelete(NULL);
 }
 
-static void threadBLE(void* pvParameters) {
-  BLEDevice::init("");
-  pBLEScan = BLEDevice::getScan(); //create new scan
-  pBLEScan->setAdvertisedDeviceCallbacks(new MyAdvertisedDeviceCallbacks());
-  pBLEScan->setActiveScan(false); //active scan uses more power, but get results faster
-  pBLEScan->setInterval(32);
-  pBLEScan->setWindow(1);  // less or equal setInterval value
-
-  while (true) {
-    //BLEScanResults foundDevices = pBLEScan->start(scanTime, false);
-    //Serial.printf("Before start\n");
-    pBLEScan->start(1, false);
-    //Serial.printf("Done scanning\n");
-  }
-
-  vTaskDelete(NULL);
-}
-
-static void buttonThread(void* pvParameters) {
+static void pollThread(void* pvParameters) {
 
   pinMode(BUTTON_1, INPUT);
   pinMode(BUTTON_2, INPUT);
@@ -199,9 +133,12 @@ static void buttonThread(void* pvParameters) {
   int bState[3];
   int bStatePrev[3];
 
-  //SoftwareSerial gpsSerial(D0,D1);
-
+  int bleBufIndex = 0;
+  char bleBuffer[100];
   gpsSerial.begin(9600);
+  RTL8720D.begin(115200);
+
+  while(!RTL8720D);
 
   for (;;) {
     bState[0] = digitalRead(BUTTON_1);
@@ -212,7 +149,6 @@ static void buttonThread(void* pvParameters) {
       contData.started = true;
     }
     if (bState[1] == HIGH && bStatePrev[1] == LOW) {
-      Serial.println("Button 1 Pressed");
       if (contData.started == true) {
         if (contData.paused == false) {
           contData.paused = true;
@@ -228,6 +164,24 @@ static void buttonThread(void* pvParameters) {
 
     while (gpsSerial.available()) {
       gps.encode(gpsSerial.read());
+    }
+
+    while (RTL8720D.available()) {
+      bleBuffer[bleBufIndex] = (char) RTL8720D.read();
+      bleBufIndex++;
+
+      if (bleBuffer[bleBufIndex-1] == '\n') {
+        bleBuffer[bleBufIndex-1] = 0;
+        if ((bleBuffer[0] == 'S') && (bleBuffer[1] == ':')) {
+          dispData.speed = atof((const char*)&bleBuffer[2]);
+          //Serial.printf("Speed: %f\n", dispData.speed);
+        }
+        if ((bleBuffer[0] == 'R') && (bleBuffer[1] == ':')) {
+          dispData.cadence = atof((const char*)&bleBuffer[2]);
+          //Serial.printf("Cadence: %f\n", dispData.cadence);
+        }
+        bleBufIndex = 0;
+      }
     }
 
     bStatePrev[0] = bState[0];
@@ -254,7 +208,6 @@ static void sensorThread(void* pvParameters) {
     delay(1000);
   }
 
-
   vTaskDelete(NULL);
 }
 
@@ -266,8 +219,6 @@ static void flashThread(void* pvParameters) {
         Serial.println("Card Mount Failed");
         vTaskDelete(NULL);
     }
-
-    Serial.println("initialization done.");
 
     char text[200];
     // Generate a filename for the ride
@@ -292,12 +243,12 @@ static void flashThread(void* pvParameters) {
           if (contData.paused == true) {
             continue;
           }
-          snprintf(text, 200, "D,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,\n", 
+          snprintf(text, 200, "D,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,\n", 
             dispData.rideTime, dispData.speed,
             dispData.cadence, dispData.avgSpeed,
             dispData.avgCadence, dispData.temperature,
             dispData.elevation, dispData.elevationGain,
-            dispData.rideTime, dispData.distance);
+            dispData.distance);
           Serial.print(text);
           rideFile.write(text);
           snprintf(text, 200, "GPS,%.8f,%.8f,%.8f\n",
@@ -322,6 +273,7 @@ static void flashThread(void* pvParameters) {
   vTaskDelete(NULL);
 }
 
+float oldElevation;
 void secondTimerCallback ( TimerHandle_t xTimer ) {
   if (contData.started == true) {
     if (contData.paused == false) {
@@ -351,6 +303,12 @@ void secondTimerCallback ( TimerHandle_t xTimer ) {
   }
   if (gps.altitude.isValid()) {
     gpsInfo.elevation = (float)gps.altitude.feet();
+    dispData.elevation = (float)gps.altitude.feet();
+
+    if (dispData.elevation > oldElevation) {         
+      dispData.elevationGain += dispData.elevation - oldElevation;
+    }
+    oldElevation = dispData.elevation;
   }
   if (gps.time.isValid()) {
     gpsTime.hours = (int)gps.time.hour();
@@ -361,11 +319,17 @@ void secondTimerCallback ( TimerHandle_t xTimer ) {
 
 void setup() {
     Serial.begin(115200);
-
     // Prevent USB driver crash
     vNopDelayMS(1000);
+    while (!Serial);
 
     vSetErrorLed(ERROR_LED_PIN, ERROR_LED_LIGHTUP_STATE);
+
+    pinMode(RTL8720D_CHIP_PU, OUTPUT);
+    digitalWrite(RTL8720D_CHIP_PU, LOW);
+    delay(100);
+    digitalWrite(RTL8720D_CHIP_PU, HIGH);
+    delay(100);    
 
     contData.paused = false;
     contData.started = false;
@@ -377,8 +341,7 @@ void setup() {
     xTimerStart(secondTimer, 1000);
 
     xTaskCreate(threadDisplay, "LCD", 1024, NULL, tskIDLE_PRIORITY + 3, &Handle_displayTask);
-    xTaskCreate(threadBLE, "BLE", 512, NULL, tskIDLE_PRIORITY + 6, &Handle_bleTask);
-    xTaskCreate(buttonThread, "Buttons", 512, NULL, tskIDLE_PRIORITY + 3, &Handle_buttonsTask);
+    xTaskCreate(pollThread, "Poll", 512, NULL, tskIDLE_PRIORITY + 6, &Handle_pollTask);
     xTaskCreate(sensorThread, "Sensors", 512, NULL, tskIDLE_PRIORITY + 3, &Handle_sensorTask);
     xTaskCreate(flashThread, "Flash", 4096, NULL, tskIDLE_PRIORITY + 3, &Handle_flashTask);
 
