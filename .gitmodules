@@ -16,3 +16,6 @@
 [submodule "libraries/Seeed_Arduino_Sketchbook"]
 	path = libraries/Seeed_Arduino_Sketchbook
 	url = git@github.com:Seeed-Studio/Seeed_Arduino_Sketchbook.git
+[submodule "libraries/TinyGPSPlus"]
+	path = libraries/TinyGPSPlus
+	url = git@github.com:mikalhart/TinyGPSPlus.git

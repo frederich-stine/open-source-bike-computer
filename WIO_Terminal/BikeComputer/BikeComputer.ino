@@ -241,9 +241,10 @@ static void flashThread(void* pvParameters) {
         }
         else {
           if (contData.paused == true) {
+            delay(1000);
             continue;
           }
-          snprintf(text, 200, "D,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,\n", 
+          snprintf(text, 200, "D,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f\n", 
             dispData.rideTime, dispData.speed,
             dispData.cadence, dispData.avgSpeed,
             dispData.avgCadence, dispData.temperature,
@@ -273,7 +274,8 @@ static void flashThread(void* pvParameters) {
   vTaskDelete(NULL);
 }
 
-float oldElevation;
+float oldElevation = 0;
+bool firstElevation = true;
 void secondTimerCallback ( TimerHandle_t xTimer ) {
   if (contData.started == true) {
     if (contData.paused == false) {
@@ -282,6 +284,7 @@ void secondTimerCallback ( TimerHandle_t xTimer ) {
       tData.seconds = (int)dispData.rideTime % 60;
       tData.minutes = ((int)dispData.rideTime / 60) % 60;
       tData.hours = (int)dispData.rideTime / 3600;
+      Serial.print("U\n");
 
       // Calculate average speed and cadence
       float divRatio = ((float)dispData.rideTime-1)/(float)dispData.rideTime;
@@ -305,7 +308,10 @@ void secondTimerCallback ( TimerHandle_t xTimer ) {
     gpsInfo.elevation = (float)gps.altitude.feet();
     dispData.elevation = (float)gps.altitude.feet();
 
-    if (dispData.elevation > oldElevation) {         
+    if(firstElevation == true) {
+      firstElevation = false;
+    }
+    else if (dispData.elevation > (oldElevation - 2.0)) {         
       dispData.elevationGain += dispData.elevation - oldElevation;
     }
     oldElevation = dispData.elevation;
@@ -321,7 +327,7 @@ void setup() {
     Serial.begin(115200);
     // Prevent USB driver crash
     vNopDelayMS(1000);
-    while (!Serial);
+    //while (!Serial);
 
     vSetErrorLed(ERROR_LED_PIN, ERROR_LED_LIGHTUP_STATE);
 
