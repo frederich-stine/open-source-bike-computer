@@ -1,0 +1,6 @@
+rideviewer/folium_map.html
+rideviewer/ride_test_gps.txt
+rideviewer/ride_test.txt
+*__pycache__
+rides/
+Development_Photos/
