@@ -19,6 +19,7 @@ typedef struct {
   float elevationGain;
   float rideTime;
   float distance;
+  float maxSpeed;
 } displayData;
 
 // controlData - Datatype for system state

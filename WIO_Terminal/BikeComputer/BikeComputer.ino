@@ -123,7 +123,7 @@ static void threadDisplay(void* pvParameters) {
         tft.drawString(message, xpos, ypos, GFXFF);
         ypos += tft.fontHeight(GFXFF);
 
-        snprintf(message, 50, "Elev Gain: %.2fFt", dispData.elevationGain);
+        snprintf(message, 50, "Max Speed: %.2fMPH", dispData.maxSpeed);
         tft.drawString(message, xpos, ypos, GFXFF);
         ypos += tft.fontHeight(GFXFF);
 
@@ -195,11 +195,13 @@ static void pollThread(void* pvParameters) {
         bleBuffer[bleBufIndex-1] = 0;
         if ((bleBuffer[0] == 'S') && (bleBuffer[1] == ':')) {
           dispData.speed = atof((const char*)&bleBuffer[2]);
-          //Serial.printf("Speed: %f\n", dispData.speed);
+
+          if (dispData.speed > dispData.maxSpeed) {
+            dispData.maxSpeed = dispData.speed
+          }
         }
         if ((bleBuffer[0] == 'R') && (bleBuffer[1] == ':')) {
           dispData.cadence = atof((const char*)&bleBuffer[2]);
-          //Serial.printf("Cadence: %f\n", dispData.cadence);
         }
         bleBufIndex = 0;
       }
@@ -280,15 +282,12 @@ static void flashThread(void* pvParameters) {
             dispData.avgCadence, dispData.temperature,
             dispData.elevation, dispData.elevationGain,
             dispData.distance);
-          Serial.print(text);
           rideFile.write(text);
           snprintf(text, 200, "GPS,%.8f,%.8f,%.8f\n",
             gpsInfo.latitude, gpsInfo.longitude, gpsInfo.elevation);
-          Serial.print(text);
           rideFile.write(text);
           snprintf(text, 200, "GPST,%d,%d,%d\n", 
             gpsTime.hours, gpsTime.minutes, gpsTime.seconds);
-          Serial.print(text);
           rideFile.write(text);
         }
       }
@@ -317,7 +316,6 @@ void secondTimerCallback ( TimerHandle_t xTimer ) {
       tData.seconds = (int)dispData.rideTime % 60;
       tData.minutes = ((int)dispData.rideTime / 60) % 60;
       tData.hours = (int)dispData.rideTime / 3600;
-      Serial.print("U\n");
 
       // Calculate average speed and cadence
       float divRatio = ((float)dispData.rideTime-1)/(float)dispData.rideTime;
@@ -356,7 +354,6 @@ void secondTimerCallback ( TimerHandle_t xTimer ) {
   }
 }
 
-
 /* Setup function
 *  This function sets up the FreeRTOS threads to run and initializes some
 *  variables on the system.
@@ -381,6 +378,7 @@ void setup() {
     dispData.speed = 0;
     dispData.cadence = 0;
     dispData.rideTime = 0;
+    dispData.maxSpeed = 0;
 
     // Start all tasks
     secondTimer = xTimerCreate("sTimer", 1000, pdTRUE, 0, secondTimerCallback);
