@@ -1,6 +1,11 @@
+// Frederich Stine
+// EN.525.743 Open Source Bike Computer
+// BikeComputer.ino
+
 #include "Free_Fonts.h"
 #include "datatypes.h"
 
+/******************* ARDUINO LIBRARIES ***********************/
 #include <TFT_eSPI.h>
 #include <SPI.h>
 #include <AHT20.h>
@@ -8,9 +13,7 @@
 #include <Seeed_Arduino_FS.h>
 #include <Seeed_Arduino_FreeRTOS.h>
 
-//**************************************************************************
-// Type Defines and Constants
-//**************************************************************************
+/******************* MACRO DEFINITIONS ***********************/
 #define ERROR_LED_PIN            LED_BUILTIN
 #define ERROR_LED_LIGHTUP_STATE  LOW
 
@@ -23,22 +26,34 @@
 
 #define gpsSerial Serial1
 
-// FreeRTOS task handles
+/******************* GLOBAL VARIABLES ***********************/
+// FreeRTOS task handles for the 4 tasks
 TaskHandle_t Handle_displayTask;
 TaskHandle_t Handle_sensorTask;
 TaskHandle_t Handle_pollTask;
 TaskHandle_t Handle_flashTask;
 
+// FreeRTOS timer handle for the system second timer
 TimerHandle_t secondTimer;
 
-// Global data structures
+// Global variable data structures - system control
 displayData dispData;
 controlData contData;
 timeData tData;
 timeData gpsTime;
 gpsData gpsInfo;
+// TinyGPS parser
 TinyGPSPlus gps;
+// File for SD-Card logging
+File rideFile;
+// Two variables for the second timer
+float oldElevation = 0;
+bool firstElevation = true;
 
+/******************* FUNCTION DEFINITIONS ***********************/
+/* Display thread
+*  This thread updates the LCD on the Wio Terminal
+*/
 static void threadDisplay(void* pvParameters) {
   TFT_eSPI tft = TFT_eSPI();
   tft.begin();
@@ -124,6 +139,12 @@ static void threadDisplay(void* pvParameters) {
   vTaskDelete(NULL);
 }
 
+/* Poll thread
+*  This thread updates any of the elements of the system that
+*  require polling functionality. This includes the buttons,
+*  BLE RPC messages from the co-processor, and GPS UART characters
+*  from the UART module.
+*/
 static void pollThread(void* pvParameters) {
 
   pinMode(BUTTON_1, INPUT);
@@ -194,6 +215,11 @@ static void pollThread(void* pvParameters) {
   vTaskDelete(NULL);
 }
 
+/* Sensor thread 
+*  This thread simply reads values from the AHT20 temperature sensor
+*  every second. This could also be covered in the poll thread to reduce
+*  context switching
+*/ 
 static void sensorThread(void* pvParameters) {
   AHT20 AHT;
 
@@ -211,7 +237,11 @@ static void sensorThread(void* pvParameters) {
   vTaskDelete(NULL);
 }
 
-File rideFile;
+/* Flash thread
+*  This thread writes to a file on the FAT-32 SD card
+*  A new file is created for each ride ending in a consecutively higher number.
+*  The data can be accessed by removing the SD card from the system.
+*/ 
 static void flashThread(void* pvParameters) {
     pinMode(5, OUTPUT);
     digitalWrite(5, HIGH);
@@ -274,8 +304,11 @@ static void flashThread(void* pvParameters) {
   vTaskDelete(NULL);
 }
 
-float oldElevation = 0;
-bool firstElevation = true;
+/* Second Timer Callback function
+*  This timer handles incrementing the time
+*  This also handles calculations that require known time intervals
+*  This includes average speed / average cadence as well as gps parsing
+*/ 
 void secondTimerCallback ( TimerHandle_t xTimer ) {
   if (contData.started == true) {
     if (contData.paused == false) {
@@ -323,26 +356,33 @@ void secondTimerCallback ( TimerHandle_t xTimer ) {
   }
 }
 
+
+/* Setup function
+*  This function sets up the FreeRTOS threads to run and initializes some
+*  variables on the system.
+*/
 void setup() {
     Serial.begin(115200);
     // Prevent USB driver crash
     vNopDelayMS(1000);
-    //while (!Serial);
 
     vSetErrorLed(ERROR_LED_PIN, ERROR_LED_LIGHTUP_STATE);
 
+    // Reset the co-processor
     pinMode(RTL8720D_CHIP_PU, OUTPUT);
     digitalWrite(RTL8720D_CHIP_PU, LOW);
     delay(100);
     digitalWrite(RTL8720D_CHIP_PU, HIGH);
     delay(100);    
 
+    // Initialize variables
     contData.paused = false;
     contData.started = false;
     dispData.speed = 0;
     dispData.cadence = 0;
     dispData.rideTime = 0;
 
+    // Start all tasks
     secondTimer = xTimerCreate("sTimer", 1000, pdTRUE, 0, secondTimerCallback);
     xTimerStart(secondTimer, 1000);
 

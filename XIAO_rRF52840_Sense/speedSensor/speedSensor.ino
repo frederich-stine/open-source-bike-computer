@@ -1,17 +1,33 @@
+// Frederich Stine
+// EN.525.743 Open Source Bike Computer
+// speedSensor.ino
+
 #include <LSM6DS3.h>
 #include <bluefruit.h>
 
+
+/******************* MACRO DEFINITIONS ***********************/
+/* These macros NEED to match with the Bluetooth co-processor code
+*/
 #define MANUFACTURER_ID 0xFFFF
 #define BLE_MAJOR 0xDEAD
 #define BLE_MINOR 0x0001
 
+/******************* GLOBAL VARIABLES ***********************/
+// IMU sensor connection
 LSM6DS3 IMU(I2C_MODE, 0x6A);
 
+// Global bluetooth packet parameters
 uint8_t beaconUuid[16];
 float* beaconUuidFloat = (float*) &beaconUuid;
 
+// Bluetooth beacon datatype
 BLEBeacon beacon(beaconUuid, BLE_MAJOR, BLE_MINOR, -54);
 
+/******************* FUNCTION DEFINITIONS ***********************/
+/* Setup function
+*  This function initializes the IMU and the bluetooth functionality
+*/
 void setup() {
   Serial.begin(115200);
 
@@ -24,6 +40,10 @@ void setup() {
   beacon.setManufacturer(MANUFACTURER_ID);
 }
 
+/* Main loop
+*  This code creates new advertising beacons with RPM data
+*  and sends them over Bluetooth advertising for 100ms
+*/
 void loop() {
   float rpm;
 
@@ -40,6 +60,11 @@ void loop() {
   Serial.printf("MAX AVG RPM: %frpm\n", rpm);
 }
 
+/* Get average RPM function
+*  This function reads in values from the IMU and averages them
+*  to remove any irregular results. This function delays for a total
+*  of 500ms.
+*/
 float get_avg_rpm() {
   float gx[10], gy[10], gz[10];
 
