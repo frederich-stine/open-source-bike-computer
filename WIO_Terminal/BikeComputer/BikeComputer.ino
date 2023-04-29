@@ -196,8 +196,10 @@ static void pollThread(void* pvParameters) {
         if ((bleBuffer[0] == 'S') && (bleBuffer[1] == ':')) {
           dispData.speed = atof((const char*)&bleBuffer[2]);
 
-          if (dispData.speed > dispData.maxSpeed) {
-            dispData.maxSpeed = dispData.speed;
+          if (contData.started == true && contData.paused == false) {
+            if (dispData.speed > dispData.maxSpeed) {
+              dispData.maxSpeed = dispData.speed;
+            }
           }
         }
         if ((bleBuffer[0] == 'R') && (bleBuffer[1] == ':')) {
