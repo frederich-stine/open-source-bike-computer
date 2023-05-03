@@ -63,7 +63,7 @@ directory. You will need to find this library and replace it with v2.0.0.
 
 The Python ride-parsing software uses Poetry to track dependencies. All dependencies can be installed with Poetry except for the 
 tkinter dependency for GUI creation with Matplotlilb. This will need to be installed on your system manually. I used *Ubuntu 22.04* 
-for development so I installed this package with *apt*.
+for development so I installed this package with *apt* and was called *python3-tk*.
 
 Poetry can be installed with pip:
 
@@ -77,3 +77,21 @@ Then when inside of the ride-parsing software directory use Poetry:
 poetry install
 poetry shell
 ```
+
+## Project Building and Flashing
+
+### Building
+
+All elements of this project are built in the Arduino IDE. It is important to select the correct platform when building the projects.
+
+**Bike Computer** -> Seeeduino Wio Terminal  
+**Sensors** -> Seeed XIAO nRF52840 Sense  
+**Bluetooth Co-Processor** -> AMBA21/AMBA22 (RTL8722DM/CSM)  
+
+### Flashing
+
+The *Bike Computer* and *Sensors* can be flashed normally with the Arduino IDE. The RTL8722 co-processor needs bridge software on 
+the Wio Terminal to be able to be flashed. This code is included as a sketchbook under the *Seeed Arduino Sketchbook*. 
+
+This is in File->Examples->Seeed Arduino Skethbook->WioTerminal_USB2Serial_BurnB720.ino
+
